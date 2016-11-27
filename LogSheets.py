@@ -1,23 +1,21 @@
+#!/usr/bin/env python
 from __future__ import print_function
+from sys import argv
 import httplib2
-import os, re
-
+import sys
+import os
+import re
+import time
+from tqdm import tqdm
 from apiclient import discovery
-import oauth2client
 from oauth2client import client
-from oauth2client import tools
-
-try:
-    import argparse
-    flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
-except ImportError:
-    flags = None
+from oauth2client.file import Storage
 
 # If modifying these scopes, delete your previously saved credentials
-# at ~/.credentials/sheets.googleapis.com-python-quickstart.json
+# at ~/.credentials/<file>.json
 SCOPES = 'https://www.googleapis.com/auth/spreadsheets'
 CLIENT_SECRET_FILE = 'client_secret.json'
-APPLICATION_NAME = 'Google Sheets API Python Quickstart'
+APPLICATION_NAME = 'Google Sheets API Python LogSheets'
 
 
 def get_credentials():
@@ -34,107 +32,131 @@ def get_credentials():
     if not os.path.exists(credential_dir):
         os.makedirs(credential_dir)
     credential_path = os.path.join(credential_dir,
-                                   'sheets.googleapis.com-python-quickstart.json')
+                                   'sheets.googleapis.logSheets.json')
 
-    store = oauth2client.file.Storage(credential_path)
+    store = Storage(credential_path)
     credentials = store.get()
     if not credentials or credentials.invalid:
         flow = client.flow_from_clientsecrets(CLIENT_SECRET_FILE, SCOPES)
         flow.user_agent = APPLICATION_NAME
-        if flags:
-            credentials = tools.run_flow(flow, store, flags)
-        else: # Needed only for compatibility with Python 2.6
-            credentials = tools.run(flow, store)
         print('Storing credentials to ' + credential_path)
     return credentials
 
-def main():
-    """Shows basic usage of the Sheets API.
 
-    Creates a Sheets API service object and prints the names and majors of
-    students in a sample spreadsheet:
-    https://docs.google.com/spreadsheets/d/1WVYNoKWDNTmw0Kpvs8hu3ypLbfQ7evjDfxVklwdcRa4/edit
-    """
+def main():
     credentials = get_credentials()
     http = credentials.authorize(httplib2.Http())
     discoveryUrl = ('https://sheets.googleapis.com/$discovery/rest?'
                     'version=v4')
-    service = discovery.build('sheets', 'v4', http=http,
-                              discoveryServiceUrl=discoveryUrl)
-
+    service = discovery.build(
+        'sheets', 'v4', http=http, discoveryServiceUrl=discoveryUrl)
+    #ID of GoogleSheet you want to use (https://docs.google.com/spreadsheets/d/<ID_SHOULD_BE_HERE>/edit#gid=0)
     spreadsheetId = '1l6wTkjaLvCtZK3V6A6-DZZOvOGCmlGDljJMxfuykJEg'
 
     rangeName = 'A:A'
-    result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheetId, range=rangeName).execute()
-    values = result.get('values', [])
-    count = 0
-    for row in values:
-        count+=1
-    print ('%s' % count)
+    result = service.spreadsheets().values().get(spreadsheetId=spreadsheetId,
+                                                 range=rangeName).execute()
 
+    #Row you want the data to be started on... Set count again after for loop to control starting of entering of data
+    sheet_row = 0
+    count = 0
+    #Finds next empty row
+    values = result.get('values', [])
+    for row in values:
+        sheet_row += 1
+    print('%s rows aleady utilized... Starting on Row: %s' % (sheet_row,
+                                                              (sheet_row + 1)))
     requests = []
+
     # Change the name of sheet ID '0' (the default first sheet on every
     # spreadsheet)
     requests.append({
         'updateSheetProperties': {
-            'properties': {'sheetId': 0, 'title': 'Kippo Log Master'},
+            'properties': {
+                'sheetId': 0,
+                'title': 'Kippo Log Master'
+            },
             'fields': 'title'
         }
     })
-    # Insert the values 1, 2, 3 into the first row of the spreadsheet with a
-    # different background color in each.
-    f = open('attemptLog','r')
-    for line in f.xreadlines():
-        date = line.split(' ', 1)[0]
-        time = line.split(' ', )[1]
-        ip_temp =  re.search(',(.+?)]', line.split(' ',)[5])
-        ip_temp2 = ip_temp.group(1)
-        ip = ip_temp2.split(",",1)[1]
-        username_temp = line.split(' ',)[8]
-        username_temp2 = username_temp.split('[',)[1]
-        username = username_temp2.split('/',)[0]
-        password_temp = username_temp2.split('/',)[1]
-        password = password_temp.split(']',)[0]
-        result = line.split(' ', )[9]
-        f2=open('attemptLog.done','a')
-        f2.write(line)
-        f2.close()
-        requests.append({
-            'updateCells': {
-                'start': {'sheetId': 0, 'rowIndex': count, 'columnIndex': 0},
-                'rows': [
-                    {
-                        'values': [
-                            {
-                                'userEnteredValue': {'stringValue': date},
-                            }, {
-                                'userEnteredValue': {'stringValue': time},
-                            }, {
-                                'userEnteredValue': {'stringValue': ip},
-                            }, {
-                                'userEnteredValue': {'stringValue': username},
-                            }, {
-                                'userEnteredValue': {'stringValue': password},
-                            }, {
-                                'userEnteredValue': {'stringValue': result},
-                            }
-                        ]
-                    }
-                ] ,
-                'fields': 'userEnteredValue'
-            }
-        })
-        # Write "=A1+1" into A2 and fill the formula across A2:C5 (so B2 is
-        # "=B1+1", C2 is "=C1+1", A3 is "=A2+1", etc..)
-            # Copy the format from A1:C1 and paste it into A2:C5, so the data in
-        # each column has the same background.
-        batchUpdateRequest = {'requests': requests}
 
-        service.spreadsheets().batchUpdate(spreadsheetId=spreadsheetId,
-                                            body=batchUpdateRequest).execute()
-        count+=1
-    f.close()
+    # We attempt to match log lines like the one below:
+    # 2015-09-09 11:28:09+0300 [SSHService ssh-userauth on HoneyPotTransport,1579,24.39.252.180] login attempt [root/alpine] succeeded
+    regex = re.compile(
+        r"(2\d\d\d-\d\d-\d\d) (\d\d:\d\d:\d\d)([+-]\d{4}) [^,]+,\d+,([\d.]+)\] login attempt \[([^\/]+)\/([^\]]+)\] (\w*)"
+    )
+
+    #Being parsing file from argument
+    with open(argv[1], 'r', encoding="ISO-8859-1") as logfile:
+        for line in logfile.readlines():
+            match = regex.search(line.rstrip())
+            if match is None:
+                return None
+            else:
+                date_log = match.group(1)
+                time_log = match.group(2)
+                #timezone = match.group(3)
+                source_ip = match.group(4)
+                username = match.group(5)
+                password = match.group(6)
+                result = match.group(7)
+                # print('%s,%s,%s,%s,%s,%s,%s' %
+                #       (date_log, time_log, timezone, source_ip, username, password, result))
+
+            #structuring google sheets api call
+            requests.append({
+                'updateCells': {
+                    'start': {
+                        'sheetId': 0,
+                        'rowIndex': sheet_row,
+                        'columnIndex': 0
+                    },
+                    'rows': [{
+                        'values': [{
+                            'userEnteredValue': {
+                                'stringValue': date_log
+                            },
+                        }, {
+                            'userEnteredValue': {
+                                'stringValue': time_log
+                            },
+                        }, {
+                            'userEnteredValue': {
+                                'stringValue': source_ip
+                            },
+                        }, {
+                            'userEnteredValue': {
+                                'stringValue': username
+                            },
+                        }, {
+                            'userEnteredValue': {
+                                'stringValue': password
+                            },
+                        }, {
+                            'userEnteredValue': {
+                                'stringValue': result
+                            },
+                        }]
+                    }],
+                    'fields': 'userEnteredValue'
+                }
+            })
+            sheet_row += 1
+            count += 1
+            batchUpdateRequest = {'requests': requests}
+
+            #By default GoogleSheetsAPI has a 100 writes per user / per 100 seconds
+            if (count % 100) == 0:
+                print('Sleeping... GoogleSheetsAPI Limit')
+                for i in tqdm(range(100)):
+                    time.sleep(1)
+                    sys.stdout.write("\r%d%%" % i)
+                    sys.stdout.flush()
+
+            #Sends the Data to GoogleSheetsAPI
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheetId, body=batchUpdateRequest).execute()
+
 
 if __name__ == '__main__':
     main()
