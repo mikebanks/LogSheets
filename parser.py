@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# This is a parser to parse Kippo ssh log attemps and return the data in tab seperated values.
+
 from sys import argv
 import re
 
